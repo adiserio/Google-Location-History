@@ -1,0 +1,327 @@
+---
+title: "Google Location History"
+author: "Angela Di Serio"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+
+options(scipen=999)          # Disable scientific notation
+```
+
+
+
+
+The Google Location History (GLH) can be downloaded from your Google account under https://takeout.google.com/settings/takeout. 
+The data provided by Google for download is a .json file and can be loaded using the jsonlite package. Loading this file into R might take a few minutes. It depends on how many location points Google had saved about you.
+
+## R Packages Used
+
+``` {r LibrariesUsed, message=FALSE, warning=FALSE, error=FALSE, echo=FALSE}
+
+list.of.packages <- c("jsonlite","dplyr","ggplot2","pander","lubridate","leaflet","leaflet.extras","scales","kableExtra","knitr")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages,repos="https://cloud.r-project.org")
+
+library(jsonlite)
+library(dplyr)
+library(ggplot2)
+library(pander)
+library(lubridate)
+library(leaflet)
+library(leaflet.extras)
+library(scales)
+library(kableExtra)
+library(knitr)
+
+
+```
+
+The packages used to generate this report are: `r gsub("\n","  \n",pandoc.list.return(list.of.packages, style = "bullet"))`
+
+
+
+## Loading the data from a json file
+
+First, we need to load the JSON file into R and create a dataframe. The data is stored under the attribute *locations*.
+
+``` {r Loading Location History}
+datos <- fromJSON("Location HistoryLast.json")
+
+```
+
+
+
+``` {r EDA1}
+
+class(datos);attributes(datos);class(datos$locations)
+
+# extract location dataframe
+df <- datos$locations
+```
+
+Let's get a glimpse of the data before start its cleaning. There are `r dim(df)[1]` observations and `r dim(df)[2]` variables.  In table 1, we can observe the number of missing values in each of the variables.
+
+``` {r}
+glimpse(df);
+ 
+y = t(t(sapply(df,function(NAs)(sum(is.na(NAs))))))
+colnames(y)<-c("NAs")
+kable(y,caption="Table 1. Number of NA") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F )
+
+```
+
+## Data cleansing and Transformation
+
+In table 2 and 3, we show the possible meaning of the attributes present in the Google Location History. 
+
+Table 2. 
+
+| Attribute | Meaning |
+|:---------------|:--------------------|
+| timeStampMs    |timestamp in milliseconds when the observation was recorded|
+|latitudeE7      | Latitude of the observation as integer|
+|longitudeE7     |Longitude of the observation as integer|
+|accuracy        |Google's estimate of how accurate the data is|
+|activity        |List of activities (Table 3) |              |
+|velocity | This could refer to the speed of the device at capture time|
+|altitude | Altitude of the observation|
+|heading | Direction the device is traveling |
+|verticalAccuracy| This could refer to the accuracy of the vertical location of the device|
+
+Table 3. Activity
+
+| Attribute | Meaning |
+|:---------------|:--------------------|
+| activity.type    |It could refer to multiple values. It seems that Google infers what the user is potentially doing. There are many possible values|
+|activity.confidence      | Google assigns a confidence value for the activity type guessed|
+|activity.timestampMs|	Timestamp in milliseconds for the recorded activity|
+
+Next, we transform some of the data in a more readable form, and extract some information from the timestamps recorded by Google.
+
+
+``` {r DataTransformation1, eval=TRUE}
+
+##Convert the position and time stamps into a more readable form
+df.map <- df %>% mutate(time  = as_datetime(as.numeric(df$timestampMs)/1000),
+                        date = date(time),
+                        hour.min  = paste(hour(time),minute(time),sep=":"),
+                        week = isoweek(time),
+                        year = isoyear(time),
+                        latitude = latitudeE7/1e7,
+                        longitude= longitudeE7/1e7) %>%
+                        select(-timestampMs,-latitudeE7,-longitudeE7,-time,-activity)
+```
+
+
+## How long did have Google collected data?
+
+The downloaded GLH file contains data from `r df.map$date[1]` until `r df.map$date[dim(df.map)[1]]`. There are `r n_distinct(df.map$date)` distinct days reported.
+
+```{r eval=TRUE}
+summary(df.map$date)
+n_distinct(df.map$date)
+
+kable(df.map %>% group_by(year) %>% summarise(n=n()),col.names=c("Year","Observations"), align=c('c','r'),caption="Table 4. Data collected by year") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F )
+```
+
+## Tracks per week
+
+``` {r eval=TRUE}
+
+df.map %>%  group_by(week,year) %>% summarise(n = n()) %>%
+   ggplot( aes(x=week, y=n)) +
+      geom_bar(stat="identity") +
+      facet_grid(facets = year ~ .) +
+      scale_x_continuous(breaks = c(1:54)) +
+      labs(x = "Week of year", y = "Entries",
+      title="Google Location History: Tracks per week") +
+      theme_bw()
+
+```
+
+## Accuracy of the measurements
+
+The average value of the accuracy is `r round(mean(df.map$accuracy,na.rm=TRUE))`, and the median is `r round(median(df.map$accuracy,na.rm=TRUE))`. The next figure shows the distribution of the accuracy for values less than 500.
+
+```{r eval=TRUE}
+summary(df.map$accuracy)
+df.map[df.map$accuracy<500,] %>%
+ggplot(aes(x=accuracy))+
+  geom_density(size=1, col='grey')+ 
+#  coord_cartesian(xlim=c(0,2000)) +
+  theme_bw() 
+
+```
+
+## Altitude Variation
+
+The next figure shows the variation in altitude during the year 2017.
+
+```{r eval=TRUE}
+df.map %>% filter(!is.na(altitude) & year==2017)  %>%
+   ggplot(aes(x=as.Date(date),y=altitude)) +
+   geom_point() +
+   theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+   scale_x_date(breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 week"),
+                minor_breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 week")) +
+   ggtitle("Altitude variation 2017") + labs(x="Date")
+```
+
+The following figure shows the variation during the year 2018.
+
+```{r eval=TRUE}
+df.map %>% filter(!is.na(altitude) & year==2018)  %>%
+   ggplot(aes(x=as.Date(date),y=altitude)) +
+   geom_point() +
+   theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+   scale_x_date(breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 week"),
+                minor_breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 week")) +
+   ggtitle("Altitude variation 2018") + labs(x="Date")
+```
+
+The figure shows the altitude variation during the 2019.
+
+```{r eval=TRUE}
+df.map %>% filter(!is.na(altitude) & year==2019)  %>%
+   ggplot(aes(x=as.Date(date),y=altitude)) +
+   geom_point() +
+   theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+   scale_x_date(breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 week"),
+                minor_breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 week")) +
+   ggtitle("Altitude variation 2019") + labs(x="Date")
+```
+
+
+The next figure shows the altitude variation during the period that Google has been collecting data.
+
+```{r eval=FALSE}
+
+df.map %>% filter(!is.na(altitude)) %>% arrange(date) %>%
+  ggplot(aes(x=as.Date(date),y=altitude)) +
+  geom_point() +
+  theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+
+  scale_x_date(breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 month"),
+                minor_breaks = function(x) seq.Date(from = min(x), to = max(x), by = "1 month")) +
+   ggtitle("Altitude Variation by month") + labs(x="Date")
+
+```
+
+## Locations visited during 2019
+
+```{r eval=TRUE} 
+map2019 <- df.map %>% filter(year==2019)
+myMap = leaflet(map2019) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  fitBounds(~min(longitude), ~min(latitude), ~max(longitude), ~max(latitude)) %>%  
+  addHeatmap(lng = ~longitude, lat = ~latitude, group = "HeatMap", blur = 20, max = 0.01, radius = 15) %>%
+  addMarkers(data = map2019, ~longitude, ~latitude, clusterOptions = markerClusterOptions(), group = "Points")
+
+myMap
+
+```
+
+## Locations visited during 2018
+
+```{r eval=TRUE} 
+map2018 <- df.map %>% filter(year==2018)
+myMap = leaflet(map2018) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  fitBounds(~min(longitude), ~min(latitude), ~max(longitude), ~max(latitude)) %>%  
+  addHeatmap(lng = ~longitude, lat = ~latitude, group = "HeatMap", blur = 20, max = 0.01, radius = 15) %>%
+  addMarkers(data = map2018, ~longitude, ~latitude, clusterOptions = markerClusterOptions(), group = "Points")
+
+myMap
+
+```
+
+
+
+``` {r eval=FALSE, echo=FALSE}
+
+myMap = leaflet(df.map) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  fitBounds(~min(longitude), ~min(latitude), ~max(longitude), ~max(latitude)) %>%  
+  addHeatmap(lng = ~longitude, lat = ~latitude, group = "HeatMap", blur = 20, max = 0.01, radius = 15) %>%
+  addMarkers(data = df.map, ~longitude, ~latitude, clusterOptions = markerClusterOptions(), group = "Points")
+
+myMap
+
+```
+
+
+
+```{r DataTransformation2, eval=FALSE, echo=FALSE}
+## Activity Extraction
+
+df.act <- df  %>% filter(activity!="NULL")
+
+# Extract timestamp for the activities
+act.timestamp <- as.character(sapply(df.act$activity, function(x) (x[[1]][[1]])))
+
+#Extract the first activity with the highest confidence 
+act.act <-(sapply(df.act$activity, function(x) (x[[2]][[1]][1])))
+act.act <- sapply(act.act,function(x) (x[[1]][1]))
+act.act <- unlist(act.act)
+
+df.act <- df.act %>% mutate(
+                        time     = as_datetime(as.numeric(act.timestamp)/1000),
+                        date     = date(time),
+                        week     = isoweek(time),
+                        year     = isoyear(time),
+                        hour     = hour(time),
+                        hour.min = paste(hour,minute(time),sep=":"),
+                        weekday  = wday(time, label=T,week_start=1, abbr = F),
+                        activity = act.act,
+                        latitude = latitudeE7/1e7,
+                        longitude= longitudeE7/1e7) %>%
+                      select(-timestampMs,-time,-latitudeE7,-longitudeE7)
+
+rm(act.act,act.timestamp)
+```
+
+```{r eval=FALSE, echo=FALSE}
+
+df.act %>%  ggplot(aes(x=(df.act$act),group=(df.act$act))) +
+   geom_bar() + 
+   labs(x = "Activity", y = "Entries", title = "Main activities") +
+   theme_bw()
+
+```
+
+
+
+``` {r eval=FALSE, echo=FALSE}
+
+unique(df.act$activity)
+
+df.act %>% filter((!is.na(activity)) & (!is.na(hour))) %>% 
+  ggplot(aes(x=hour)) +
+  geom_bar()+
+  coord_cartesian(xlim=c(0,24))+
+  facet_wrap(~activity,scales='free') +
+  theme_bw() + labs(x="Hours (0..24)")
+
+```
+
+
+
+``` {r eval=FALSE, echo=FALSE}
+# Frequency of different activities by weekday.
+df.act %>% 
+  select(activity,weekday) %>%
+  filter((!is.na(activity)) & (!is.na(weekday))) %>%
+  ggplot(aes(x=activity)) + 
+  geom_bar() +
+  facet_wrap(~weekday, scales = 'free', ncol=4) +
+  theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+```
+
+

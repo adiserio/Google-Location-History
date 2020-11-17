@@ -8,12 +8,8 @@ output:
 
 ```{r setup, include=FALSE}
 #knitr::opts_chunk$set(echo = TRUE)
-
 options(scipen=999)          # Disable scientific notation
 ```
-
-
-
 
 The Google Location History (GLH) can be downloaded from your Google account under https://takeout.google.com/settings/takeout. 
 The data provided by Google for download is a .json file and can be loaded using the jsonlite package. Loading this file into R might take a few minutes. It depends on how many location points Google had saved about you.
@@ -21,7 +17,6 @@ The data provided by Google for download is a .json file and can be loaded using
 ## R Packages Used
 
 ``` {r LibrariesUsed, message=FALSE, warning=FALSE, error=FALSE, echo=FALSE}
-
 list.of.packages <- c("jsonlite","dplyr","ggplot2","pander","lubridate","leaflet","leaflet.extras","scales","kableExtra","knitr")
 
 new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
@@ -37,13 +32,9 @@ library(leaflet.extras)
 library(scales)
 library(kableExtra)
 library(knitr)
-
-
 ```
 
 The packages used to generate this report are: `r gsub("\n","  \n",pandoc.list.return(list.of.packages, style = "bullet"))`
-
-
 
 ## Loading the data from a json file
 
@@ -51,13 +42,9 @@ First, we need to load the JSON file into R and create a dataframe. The data is 
 
 ``` {r Loading Location History}
 datos <- fromJSON("Location HistoryLast.json")
-
 ```
 
-
-
 ``` {r EDA1}
-
 class(datos);attributes(datos);class(datos$locations)
 
 # extract location dataframe
